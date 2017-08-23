@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.widget.ImageView;
 
 import java.io.File;
@@ -96,12 +97,27 @@ public class BitmapWorkerTask extends AsyncTask<File, Void, Bitmap> {
         bmOptions.inSampleSize = calculateInSampleSize(bmOptions);
         bmOptions.inJustDecodeBounds = false;
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1)
+        {
+            addInBitmapOptions(bmOptions);
+        }
+
         return BitmapFactory.decodeFile(imageFile.getAbsolutePath(), bmOptions);
     }
 
     public File getImageFile()
     {
         return mImageFile;
+    }
+
+    private static void addInBitmapOptions (BitmapFactory.Options options)
+    {
+        options.inMutable = true;
+        Bitmap bitmap = CameraIntentActivity.getBitmapFromReusableSet(options);
+        if (bitmap != null)
+        {
+            options.inBitmap = bitmap;
+        }
     }
 
     private void rotateImage(Bitmap bitmap, ImageView imageView)

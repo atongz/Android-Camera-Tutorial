@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.v4.app.ActivityCompat;
@@ -24,11 +25,16 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.ref.SoftReference;
 import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
 
 import static android.R.attr.key;
 import static android.R.attr.subMenuArrow;
@@ -50,6 +56,7 @@ public class CameraIntentActivity extends AppCompatActivity {
     private static int mColumnCount = 3;
     private static int mImageWidth;
     private static int mImageHeight;
+    private static Set<SoftReference<Bitmap>> mReusableBitmap;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,16 +74,31 @@ public class CameraIntentActivity extends AppCompatActivity {
         mRecyclerView.setAdapter(imageAdapter);
 
         final int maxMemorySize = (int) Runtime.getRuntime().maxMemory() / 1024;
-        final int cacheSize = maxMemorySize / 10;
+        //final int cacheSize = maxMemorySize / 10;
+        final int cacheSize = maxMemorySize / 100;
 
         mMemoryCache = new LruCache<String, Bitmap>(cacheSize)
         {
+            @Override
+            protected void entryRemoved(boolean evicted, String key, Bitmap oldValue, Bitmap newValue)
+            {
+                super.entryRemoved(evicted, key, oldValue, newValue);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1)
+                {
+                    mReusableBitmap.add(new SoftReference<Bitmap>(oldValue));
+                }
+            }
             @Override
             protected int sizeOf (String key, Bitmap value)
             {
                 return value.getByteCount() / 1024;
             }
         };
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1)
+        {
+            mReusableBitmap = Collections.synchronizedSet(new HashSet<SoftReference<Bitmap>>());
+        }
 
         ////////////////////////////////////////////////////////////////////////////////////////
         // Permisson Request
@@ -179,6 +201,70 @@ public class CameraIntentActivity extends AppCompatActivity {
                 //mMemoryCache.put(key, Bitmap.createBitmap(BitmapWorkerTask.TARGET_IMAGE_VIEW_WIDTH, BitmapWorkerTask.TARGET_IMAGE_VIEW_HEIGHT, Bitmap.Config.ARGB_8888));
             //mMemoryCache.snapshot().keySet().toString();
         }
+    }
+    private static int getBytesPerPixel (Bitmap.Config config)
+    {
+        if (config == Bitmap.Config.ARGB_8888)
+        {
+            return 4;
+        }
+        else if (config == Bitmap.Config.RGB_565)
+        {
+            return 2;
+        }
+        else if (config == Bitmap.Config.ARGB_4444)
+        {
+            return 2;
+        }
+        else if (config == Bitmap.Config.ALPHA_8)
+        {
+            return 1;
+        }
+        return 1;
+    }
+    private static boolean canUseForBitmap (Bitmap candidate, BitmapFactory.Options options)
+    {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
+        {
+            int width = options.outWidth / options.inSampleSize;
+            int height = options.outHeight / options.inSampleSize;
+            int byteCount = width * height * getBytesPerPixel(candidate.getConfig());
+            return byteCount <= candidate.getAllocationByteCount();
+        }
+        return candidate.getWidth() == options.outWidth &&
+                candidate.getHeight() == options.outHeight &&
+                options.inSampleSize == 1;
+    }
+
+    public static Bitmap getBitmapFromReusableSet (BitmapFactory.Options options)
+    {
+        Bitmap bitmap = null;
+        if (mReusableBitmap != null && !mReusableBitmap.isEmpty())
+        {
+            synchronized (mReusableBitmap)
+            {
+                Bitmap item;
+                Iterator<SoftReference<Bitmap>> iterator = mReusableBitmap.iterator();
+                while (iterator.hasNext())
+                {
+                    item = iterator.next().get();
+                    if (item != null && item.isMutable())
+                    {
+                        if (canUseForBitmap(item, options))
+                        {
+                            bitmap = item;
+                            iterator.remove();
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        iterator.remove();
+                    }
+                }
+            }
+        }
+        return bitmap;
     }
 /*
     private Bitmap setReducedImageSize ()
